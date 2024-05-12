@@ -10,6 +10,19 @@ from skrl.agents.torch import Agent
 from skrl.envs.wrappers.torch import Wrapper
 from skrl.trainers.torch import Trainer
 
+import wandb
+
+def get_gpu_allocated_memory(self):
+    device = "cuda:0" if torch.cuda.is_available() else "cpu"
+    bytes_to_mebibytes = 1024 * 1024 # or 1 << 20 or 2**20 (bytes to mebibytes)
+    memory = torch.cuda.memory_allocated(device) / bytes_to_mebibytes
+    return memory
+
+def get_cpu_allocated_memory(self):
+    import psutil as ps
+    bytes_to_mebibytes = 1024 * 1024 # or 1 << 20 or 2**20 (bytes to mebibytes)
+    memory = ps.Process().memory_info().rss / bytes_to_mebibytes
+    return memory
 
 # [start-config-dict-torch]
 SEQUENTIAL_TRAINER_DEFAULT_CONFIG = {
@@ -25,6 +38,7 @@ class SequentialTrainer(Trainer):
     def __init__(self,
                  env: Wrapper,
                  agents: Union[Agent, List[Agent]],
+                 wandblog: bool = False,
                  agents_scope: Optional[List[int]] = None,
                  cfg: Optional[dict] = None) -> None:
         """Sequential trainer
@@ -53,6 +67,8 @@ class SequentialTrainer(Trainer):
         else:
             self.agents.init(trainer_cfg=self.cfg)
 
+        self.wandblog = wandblog
+
     def train(self) -> None:
         """Train the agents sequentially
 
@@ -77,10 +93,12 @@ class SequentialTrainer(Trainer):
         if self.num_simultaneous_agents == 1:
             # single-agent
             if self.env.num_agents == 1:
-                self.single_agent_train()
+                self.single_agent_train(self.wandblog)
             # multi-agent
             else:
                 self.multi_agent_train()
+
+            print(f"Single agent training is complete")
             return
 
         # reset env
@@ -96,13 +114,31 @@ class SequentialTrainer(Trainer):
             with torch.no_grad():
                 actions = torch.vstack([agent.act(states[scope[0]:scope[1]], timestep=timestep, timesteps=self.timesteps)[0] \
                                         for agent, scope in zip(self.agents, self.agents_scope)])
+                
+                if self.wandblog:
+                    wandb.log({
+                        "Trainer / gpu_allocated_memory": get_gpu_allocated_memory(),
+                        "Trainer / cpu_allocated_memory": get_cpu_allocated_memory()
+                    })
 
                 # step the environments
                 next_states, rewards, terminated, truncated, infos = self.env.step(actions)
 
+                if self.wandblog:
+                    wandb.log({
+                        "Trainer / gpu_allocated_memory": get_gpu_allocated_memory(),
+                        "Trainer / cpu_allocated_memory": get_cpu_allocated_memory()
+                    })
+
                 # render scene
                 if not self.headless:
                     self.env.render()
+
+                if self.wandblog:
+                    wandb.log({
+                        "Trainer / gpu_allocated_memory": self.mem_logger.get_gpu_allocated_memory(),
+                        "Trainer / cpu_allocated_memory": self.mem_logger.get_cpu_allocated_memory()
+                    })
 
                 # record the environments' transitions
                 for agent, scope in zip(self.agents, self.agents_scope):
@@ -120,12 +156,24 @@ class SequentialTrainer(Trainer):
             for agent in self.agents:
                 agent.post_interaction(timestep=timestep, timesteps=self.timesteps)
 
+            if self.wandblog:
+                    wandb.log({
+                        "Trainer / gpu_allocated_memory": self.logger.get_gpu_allocated_memory(),
+                        "Trainer / cpu_allocated_memory": self.logger.get_cpu_allocated_memory()
+                    })
+
             # reset environments
             with torch.no_grad():
                 if terminated.any() or truncated.any():
                     states, infos = self.env.reset()
                 else:
                     states = next_states
+        
+        if self.wandblog:
+            wandb.log({
+                "Trainer / gpu_allocated_memory": self.logger.get_gpu_allocated_memory(),
+                "Trainer / cpu_allocated_memory": self.logger.get_cpu_allocated_memory()
+            })
 
     def eval(self) -> None:
         """Evaluate the agents sequentially
