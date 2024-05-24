@@ -356,7 +356,7 @@ class PPO(Agent):
         # compute returns and advantages
         with torch.no_grad():
             self.value.train(False)
-            last_values, _, _ = self.value.act({"states": self._state_preprocessor(self._current_next_states.float())}, role="value")
+            last_values, _, _ = self.value.act({"states": self._state_preprocessor(self._current_next_states["state"].float())}, role="value")
             self.value.train(True)
         last_values = self._value_preprocessor(last_values, inverse=True)
 
