@@ -78,6 +78,11 @@ class Trainer:
                 self.env.close()
                 logger.info("Environment closed")
 
+        # Added for compatibility
+        if not hasattr(self.env, "num_agents"):
+            print("Warning: Using a custom env object, manually setting required fields...")
+            self.env.num_agents = len(self.agents) if isinstance(self.agents, list) else 1
+
     def __str__(self) -> str:
         """Generate a string representation of the trainer
 
@@ -193,7 +198,7 @@ class Trainer:
                 # step the environments
                 next_states, rewards, terminated, truncated, infos = self.env.step(actions)
 
-                if wandblog:
+                if wandblog and "resolution" in self.cfg:
                     observation_space_shape = self.cfg["resolution"]
                     if observation_space_shape is not None:
                         # states_log = states.view(-1, *observation_space_shape)

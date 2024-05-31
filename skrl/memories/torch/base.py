@@ -1,4 +1,5 @@
 from typing import List, Optional, Tuple, Union
+from itertools import chain
 
 import csv
 import datetime
@@ -193,6 +194,11 @@ class Memory:
         :return: True if the tensor was created, otherwise False
         :rtype: bool
         """
+        if isinstance(size, gymnasium.spaces.dict.Dict):
+            for key, s in size.items():
+                dtype_ = torch.uint8 if key == "rgb" else dtype
+                self.create_tensor(key, s, dtype_)
+            return
         # compute data size
         size = self._get_space_size(size, keep_dimensions)
         # check dtype and size if the tensor exists
@@ -261,13 +267,30 @@ class Memory:
 
         # dimensions and shapes of the tensors (assume all tensors have the dimensions of the first tensor)
         tmp = tensors.get("states", tensors[next(iter(tensors))])  # ask for states first
+        if isinstance(tmp, dict):
+            # Handle custom case (integrating with ManiSkill).
+            assert set(tmp.keys()) == {"state", "rgb"}
+            tmp = tmp["state"]
         dim, shape = tmp.ndim, tmp.shape
 
         # multi environment (number of environments equals num_envs)
         if dim == 2 and shape[0] == self.num_envs:
-            for name, tensor in tensors.items():
+            for name, tensor in chain.from_iterable(
+                (
+                    [(n1, t1) for n1, t1 in t0.items()]
+                    if isinstance(t0, dict) and n0 in {"states"}
+                    else [(n0, t0)]
+                )
+                for n0, t0 in tensors.items()
+            ):
                 if name in self.tensors:
-                    self.tensors[name][self.memory_index].copy_(tensor)
+                    if name in {"rewards", "terminated", "log_prob", "values"}:
+                        self.tensors[name][self.memory_index].copy_(tensor.view(-1, 1))
+                    elif name in {"actions", "state", "rgb"}:
+                        self.tensors[name][self.memory_index].copy_(tensor.view(1, -1))
+                    else:
+                        assert name == "rewards"
+                        self.tensors[name][self.memory_index].copy_(tensor)
             self.memory_index += 1
         # multi environment (number of environments less than num_envs)
         elif dim == 2 and shape[0] < self.num_envs:

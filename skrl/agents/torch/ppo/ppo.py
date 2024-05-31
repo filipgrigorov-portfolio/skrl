@@ -189,7 +189,9 @@ class PPO(Agent):
             self.memory.create_tensor(name="advantages", size=1, dtype=torch.float32)
 
             # tensors sampled during training
-            self._tensors_names = ["states", "actions", "log_prob", "values", "returns", "advantages"]
+            # self._tensors_names = ["states", "actions", "log_prob", "values", "returns", "advantages"]
+            common = ["actions", "log_prob", "values", "returns", "advantages"]
+            self._tensors_names = ["state", "rgb"] + common
 
         # create temporary variables needed for storage and computation
         self._current_log_prob = None
@@ -356,7 +358,17 @@ class PPO(Agent):
         # compute returns and advantages
         with torch.no_grad():
             self.value.train(False)
-            last_values, _, _ = self.value.act({"states": self._state_preprocessor(self._current_next_states.float())}, role="value")
+            last_values, _, _ = self.value.act(
+                {
+                    "states": {
+                        "state": self._state_preprocessor(
+                            self._current_next_states["state"].float()
+                        ),
+                        "rgb": self._current_next_states["rgb"]
+                    }
+                },
+                role="value",
+            )
             self.value.train(True)
         last_values = self._value_preprocessor(last_values, inverse=True)
 
@@ -384,10 +396,18 @@ class PPO(Agent):
             kl_divergences = []
 
             # mini-batches loop
-            for sampled_states, sampled_actions, sampled_log_prob, sampled_values, sampled_returns, sampled_advantages in sampled_batches:
+            # for sampled_states, sampled_actions, sampled_log_prob, sampled_values, sampled_returns, sampled_advantages in sampled_batches:
+            for sampled_states, sampled_rgb, sampled_actions, sampled_log_prob, sampled_values, sampled_returns, sampled_advantages in sampled_batches:
                 sampled_states = self._state_preprocessor(sampled_states, train=not epoch)
 
-                _, next_log_prob, _ = self.policy.act({"states": sampled_states, "taken_actions": sampled_actions}, role="policy")
+                _, next_log_prob, _ = self.policy.act(
+                    {
+                        "states": {"state": sampled_states, "rgb": sampled_rgb},
+                        "taken_actions": sampled_actions,
+                    },
+                    role="policy",
+                )
+                next_log_prob = next_log_prob.permute(1, 0, 2)
 
                 # compute approximate KL divergence
                 with torch.no_grad():
@@ -413,12 +433,19 @@ class PPO(Agent):
                 policy_loss = -torch.min(surrogate, surrogate_clipped).mean()
 
                 # compute value loss
-                predicted_values, _, _ = self.value.act({"states": sampled_states}, role="value")
+                predicted_values, _, _ = self.value.act(
+                    {
+                        "states": {"state": sampled_states, "rgb": sampled_rgb},
+                        "taken_actions": sampled_actions,
+                    },
+                    role="value",
+                )
 
                 if self._clip_predicted_values:
                     predicted_values = sampled_values + torch.clip(predicted_values - sampled_values,
                                                                    min=-self._value_clip,
                                                                    max=self._value_clip)
+                predicted_values = predicted_values.permute(1, 0, 2)
                 value_loss = self._value_loss_scale * F.mse_loss(sampled_returns, predicted_values)
 
                 # optimization step
