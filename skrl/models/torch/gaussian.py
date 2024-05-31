@@ -139,7 +139,7 @@ class GaussianMixin:
             actions = torch.clamp(actions, min=self._clip_actions_min, max=self._clip_actions_max)
 
         # log of the probability density function
-        log_prob = self._distribution.log_prob(inputs.get("taken_actions", actions))
+        log_prob = self._distribution.log_prob(inputs.get("taken_actions", actions).view(*actions.shape))
         if self._reduction is not None:
             log_prob = self._reduction(log_prob, dim=-1)
         if log_prob.dim() != actions.dim():
