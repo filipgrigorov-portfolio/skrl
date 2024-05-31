@@ -407,6 +407,7 @@ class PPO(Agent):
                     },
                     role="policy",
                 )
+                next_log_prob = next_log_prob.permute(1, 0, 2)
 
                 # compute approximate KL divergence
                 with torch.no_grad():
