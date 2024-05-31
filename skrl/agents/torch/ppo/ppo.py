@@ -445,6 +445,7 @@ class PPO(Agent):
                     predicted_values = sampled_values + torch.clip(predicted_values - sampled_values,
                                                                    min=-self._value_clip,
                                                                    max=self._value_clip)
+                predicted_values = predicted_values.permute(1, 0, 2)
                 value_loss = self._value_loss_scale * F.mse_loss(sampled_returns, predicted_values)
 
                 # optimization step
